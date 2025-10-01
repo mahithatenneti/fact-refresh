@@ -2,8 +2,10 @@ name: Daily DB Refresh
 
 on:
   schedule:
-    # Runs at 00:00 UTC daily (05:30 IST)
-    - cron: "0 0 * * *"
+    # 09:00 IST daily = 03:30 UTC
+    - cron: "30 3 * * *"
+    # 21:00 IST daily = 15:30 UTC
+    - cron: "30 15 * * *"
   workflow_dispatch: {}
 
 jobs:
@@ -12,19 +14,22 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.11"
+
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+
       - name: Run refresh
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HF_DATASET_ID: YOURHF/news_articles_daily
-          E5_NAME: intfloat/multilingual-e5-base   # multilingual embeddings
-          SKIP_SUMMARY: "1"                        # start fast; we can enable summaries later
+          HF_DATASET_ID: YOURHF/news_articles_daily   # change to your dataset ID
+          E5_NAME: intfloat/multilingual-e5-base
+          SKIP_SUMMARY: "1"
         run: |
           python refresh_db.py
