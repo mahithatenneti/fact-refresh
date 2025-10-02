@@ -11,6 +11,12 @@ on:
 jobs:
   refresh:
     runs-on: ubuntu-latest
+    env:                       # 👈 put env here so *all steps* see it
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      HF_DATASET_ID: YOURHF/news_articles_daily   # <-- replace with your HF username/dataset
+      E5_NAME: intfloat/multilingual-e5-base
+      SKIP_SUMMARY: "1"
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -26,10 +32,5 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run refresh
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HF_DATASET_ID: YOURHF/news_articles_daily   # change to your dataset ID
-          E5_NAME: intfloat/multilingual-e5-base
-          SKIP_SUMMARY: "1"
         run: |
           python refresh_db.py
