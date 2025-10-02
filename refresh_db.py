@@ -25,7 +25,8 @@ def ensure_hf_repo():
     if not HF_TOKEN:
         raise RuntimeError("HF_TOKEN not set (GitHub Actions secret)")
     HfFolder.save_token(HF_TOKEN)
-    create_repo(HF_DATASET_ID, repo_type="dataset", exist_ok=True)
+    # ✅ force private dataset creation
+    create_repo(HF_DATASET_ID, repo_type="dataset", exist_ok=True, private=True)
 
 def load_previous_df():
     try:
@@ -86,9 +87,9 @@ def main():
     os.makedirs("data", exist_ok=True)
     merged.to_parquet(ART_PARQUET, index=False)
 
-    # 5) Push to HF as dataset split
+    # 5) Push to HF as private dataset split
     ds = Dataset.from_pandas(merged, preserve_index=False)
-    ds.push_to_hub(HF_DATASET_ID, private=False)
+    ds.push_to_hub(HF_DATASET_ID, private=True)   # ✅ force private push
 
     # 6) Upload FAISS + meta as files alongside dataset
     upload_file(path_or_fileobj=FAISS_PATH, path_in_repo="faiss.index",
