@@ -37,14 +37,20 @@ def load_previous_df():
 
 def dedup_merge(old_df, new_df):
     all_df = pd.concat([old_df, new_df], ignore_index=True)
+
+    # normalize datetimes → force UTC to avoid mixed tz error
+    all_df["date"] = pd.to_datetime(all_df["date"], errors="coerce", utc=True)
+
     # keep the newest per uid
-    all_df["date"] = pd.to_datetime(all_df["date"], errors="coerce")
     all_df = all_df.sort_values("date", ascending=False, na_position="last")
     all_df = all_df.drop_duplicates(subset=["uid"], keep="first")
+
     # enforce dtypes / fill
-    for c in ["title","summary","lang","source","url"]:
+    for c in ["title", "summary", "lang", "source", "url"]:
         all_df[c] = all_df[c].fillna("")
+
     return all_df
+
 
 def main():
     print(f"[{ist_now()}] start refresh")
