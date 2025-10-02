@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     env:                       # 👈 put env here so *all steps* see it
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
-      HF_DATASET_ID: YOURHF/news_articles_daily   # <-- replace with your HF username/dataset
+      HF_DATASET_ID: mahi101010/news_articles_daily   # <-- replace with your HF username/dataset
       E5_NAME: intfloat/multilingual-e5-base
       SKIP_SUMMARY: "1"
 
