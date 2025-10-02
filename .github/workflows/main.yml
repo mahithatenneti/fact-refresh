@@ -11,9 +11,10 @@ on:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    env:                       # 👈 put env here so *all steps* see it
+    timeout-minutes: 60
+    env:                       # all steps can read these
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
-      HF_DATASET_ID: mahi101010/news_articles_daily   # <-- replace with your HF username/dataset
+      HF_DATASET_ID: mahi101010/news_articles_daily_m
       E5_NAME: intfloat/multilingual-e5-base
       SKIP_SUMMARY: "1"
 
@@ -25,6 +26,17 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
+
+      - name: Debug HF identity
+        run: |
+          python - << 'PY'
+          import os
+          from huggingface_hub import HfApi
+          api = HfApi(token=os.environ["HF_TOKEN"])
+          print("HF whoami:", api.whoami())
+          print("HF_DATASET_ID:", os.environ["HF_DATASET_ID"])
+          PY
 
       - name: Install deps
         run: |
