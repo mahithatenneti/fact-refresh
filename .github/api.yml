@@ -1,0 +1,31 @@
+name: Run Flask API (manual)
+
+on:
+  workflow_dispatch: {}   # run it manually from the Actions tab
+
+jobs:
+  serve:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Flask API
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_DATASET_ID: mahi1010/news_articles_daily_m
+          PORT: 8000
+        run: |
+          nohup python api/app.py &
+          sleep 10
+          echo "Server started. Access locally via logs or with Ngrok (next step)."
