@@ -1,31 +1,17 @@
-name: Run Flask API (manual)
-
-on:
-  workflow_dispatch: {}   # run it manually from the Actions tab
-
-jobs:
-  serve:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Run Flask API
+      - name: Run Flask API with Ngrok
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_DATASET_ID: mahi1010/news_articles_daily_m
-          PORT: 8000
+          NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
         run: |
+          pip install flask pyngrok
           nohup python api/app.py &
           sleep 10
-          echo "Server started. Access locally via logs or with Ngrok (next step)."
+          python - <<'PY'
+from pyngrok import ngrok
+import time
+ngrok.set_auth_token("${{ secrets.NGROK_AUTH_TOKEN }}")
+tunnel = ngrok.connect(8000, "http")
+print("🌐 Public URL:", tunnel.public_url)
+time.sleep(3600)  # keep alive for 1 hour
+PY
