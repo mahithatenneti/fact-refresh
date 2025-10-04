@@ -6,7 +6,6 @@ on:
 jobs:
   serve:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -27,14 +26,6 @@ jobs:
           HF_DATASET_ID: mahi1010/news_articles_daily_m
           NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
         run: |
-          nohup python api/app.py &
+          nohup python api/app.py >/dev/null 2>&1 &
           sleep 8
-          python - <<'PY'
-from pyngrok import ngrok
-import time, os
-ngrok.set_auth_token(os.environ["NGROK_AUTH_TOKEN"])
-tunnel = ngrok.connect(8000, "http")
-print("\n✅ Flask API is live at:", tunnel.public_url)
-print("   Try /health or /articles?limit=3\n")
-time.sleep(600)  # keep alive 10 minutes
-PY
+          python -c "from pyngrok import ngrok; import time, os; ngrok.set_auth_token(os.environ['NGROK_AUTH_TOKEN']); t=ngrok.connect(8000,'http'); print('PUBLIC_URL=' + t.public_url, flush=True); time.sleep(600)"
