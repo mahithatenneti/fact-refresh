@@ -15,4 +15,5 @@ python-dateutil==2.9.0.post0
 feedparser==6.0.11
 lxml[html_clean]
 lxml_html_clean
+flask==3.0.3
 
