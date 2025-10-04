@@ -1,0 +1,40 @@
+name: Temporary Flask + Ngrok Test
+
+on:
+  workflow_dispatch: {}  # run manually
+
+jobs:
+  serve:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt flask pyngrok
+
+      - name: Start Flask + Ngrok
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_DATASET_ID: mahi1010/news_articles_daily_m
+          NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+        run: |
+          nohup python api/app.py &
+          sleep 8
+          python - <<'PY'
+from pyngrok import ngrok
+import time
+ngrok.set_auth_token("${{ secrets.NGROK_AUTH_TOKEN }}")
+tunnel = ngrok.connect(8000, "http")
+print("\n✅ Flask API is live at:", tunnel.public_url)
+print("   Try adding /health or /articles?limit=3\n")
+time.sleep(600)  # keep alive for 10 minutes
+PY
