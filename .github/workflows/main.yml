@@ -14,8 +14,8 @@ jobs:
     timeout-minutes: 60
     env:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
-      HF_DATASET_ID: mahi1010/news_articles_daily_m
-      E5_NAME: intfloat/multilingual-e5-base
+      HF_DATASET_ID: "mahi1010/news_articles_daily_m"
+      E5_NAME: "intfloat/multilingual-e5-base"
       SKIP_SUMMARY: "1"
 
     steps:
@@ -28,20 +28,16 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
-      - name: Install deps
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Debug HF identity
+      - name: Debug HF identity (no heredoc)
         run: |
-          python - << 'PY'
-          import os
-          from huggingface_hub import HfApi
-          api = HfApi(token=os.environ["HF_TOKEN"])
-          print("HF whoami:", api.whoami())
-          print("HF_DATASET_ID:", os.environ["HF_DATASET_ID"])
-          PY
+          python -c "import os; from huggingface_hub import HfApi; api=HfApi(token=os.getenv('HF_TOKEN')); print('HF whoami:', api.whoami())"
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
 
       - name: Run refresh
         run: |
