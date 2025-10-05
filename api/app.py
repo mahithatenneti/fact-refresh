@@ -1,32 +1,42 @@
 # fact-refresh/api/app.py
 
-import os, json
+import os
 from datetime import datetime
 import pandas as pd
 from flask import Flask, request, jsonify
 from datasets import load_dataset
 
-# NEW imports for retrieval
+# --- retrieval / embeddings deps ---
 import json as _json
 import numpy as np
-import requests, faiss, torch
+import requests
+import faiss
+import torch
 from transformers import AutoTokenizer, AutoModel
 
+# === Config ===
 HF_DATASET_ID = os.getenv("HF_DATASET_ID", "mahi1010/news_articles_daily_m")
-E5_NAME = os.getenv("E5_NAME", "intfloat/multilingual-e5-base")  # embedding model
+E5_NAME = os.getenv("E5_NAME", "intfloat/multilingual-e5-base")  # embedding model name
 
 # For private datasets you must have HF_TOKEN in your environment when you run (Actions or local).
 
+# (Helps reduce CPU usage on small runners)
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+torch.set_num_threads(1)
+
 app = Flask(__name__)
-_ds = None
-_df = None
 
 # Caches
+_ds = None
+_df = None
 _FAISS = None
 _META = None
 _E5_TOK = None
 _E5_MOD = None
 
+
+# ---------- Data loading ----------
 def _load_df():
     """Lazy-load the HF dataset into a pandas DataFrame (UTC dates)."""
     global _ds, _df
@@ -38,10 +48,12 @@ def _load_df():
     _df = _df.sort_values("date", ascending=False)
     return _df
 
+
 def _to_ist(dt_utc):
     if pd.isna(dt_utc):
         return None
     return dt_utc.tz_convert("Asia/Kolkata").isoformat()
+
 
 # ---------- Retrieval helpers ----------
 def _load_faiss_and_meta():
@@ -49,15 +61,23 @@ def _load_faiss_and_meta():
     global _FAISS, _META
     if _FAISS is not None and _META is not None:
         return _FAISS, _META
+
     base = f"https://huggingface.co/datasets/{HF_DATASET_ID}/resolve/main"
-    fa = requests.get(f"{base}/faiss.index").content
-    me = requests.get(f"{base}/meta.json").text
     os.makedirs("/tmp", exist_ok=True)
-    open("/tmp/faiss.index", "wb").write(fa)
-    open("/tmp/meta.json", "w").write(me)
+
+    # small timeouts to avoid hanging
+    fa_bytes = requests.get(f"{base}/faiss.index", timeout=60).content
+    meta_txt = requests.get(f"{base}/meta.json", timeout=30).text
+
+    with open("/tmp/faiss.index", "wb") as f:
+        f.write(fa_bytes)
+    with open("/tmp/meta.json", "w") as f:
+        f.write(meta_txt)
+
     _FAISS = faiss.read_index("/tmp/faiss.index")
-    _META = _json.loads(me)
+    _META = _json.loads(meta_txt)
     return _FAISS, _META
+
 
 def _load_e5():
     """Lazy-load the E5 model for query embeddings."""
@@ -69,6 +89,7 @@ def _load_e5():
     _E5_MOD.eval()
     return _E5_TOK, _E5_MOD
 
+
 def _embed_query(q: str) -> np.ndarray:
     tok, mod = _load_e5()
     with torch.no_grad():
@@ -77,26 +98,34 @@ def _embed_query(q: str) -> np.ndarray:
         v = v / (np.linalg.norm(v, axis=1, keepdims=True) + 1e-12)
         return v.astype(np.float32)
 
+
 # ---------- Routes ----------
 @app.get("/")
 def home():
     return {
         "ok": True,
-        "message": "Flask is running. Try /health or /articles?limit=5 or /verify?q=your+claim&k=5",
-        "endpoints": ["/health", "/articles", "/verify"]
+        "message": "Flask is running. Try /health, /articles?limit=5, or /verify?q=your+claim&k=5",
+        "endpoints": ["/health", "/articles", "/verify"],
     }
+
 
 @app.get("/health")
 def health():
     df = _load_df()
     latest = df["date"].max()
-    return jsonify({
-        "ok": True,
-        "rows": int(len(df)),
-        "latest_utc": latest.isoformat() if pd.notna(latest) else None,
-        "latest_ist": _to_ist(latest),
-        "dataset": HF_DATASET_ID
-    })
+    # also report faiss availability (lazy)
+    faiss_ready = _FAISS is not None
+    return jsonify(
+        {
+            "ok": True,
+            "rows": int(len(df)),
+            "latest_utc": latest.isoformat() if pd.notna(latest) else None,
+            "latest_ist": _to_ist(latest),
+            "dataset": HF_DATASET_ID,
+            "faiss_loaded": faiss_ready,
+        }
+    )
+
 
 @app.get("/articles")
 def articles():
@@ -108,15 +137,21 @@ def articles():
       /articles?since=2025-10-01
     """
     df = _load_df().copy()
-    q      = request.args.get("q", "").strip()
+    q = request.args.get("q", "").strip()
     source = request.args.get("source", "").strip()
-    lang   = request.args.get("lang", "").strip()
-    since  = request.args.get("since", "").strip()
-    limit  = int(request.args.get("limit", "20"))
+    lang = request.args.get("lang", "").strip()
+    since = request.args.get("since", "").strip()
+
+    try:
+        limit = int(request.args.get("limit", "20"))
+    except ValueError:
+        limit = 20
+    limit = max(1, min(limit, 100))
 
     if q:
-        mask = df["title"].fillna("").str.contains(q, case=False, na=False) | \
-               df["summary"].fillna("").str.contains(q, case=False, na=False)
+        mask = df["title"].fillna("").str.contains(q, case=False, na=False) | df[
+            "summary"
+        ].fillna("").str.contains(q, case=False, na=False)
         df = df[mask]
     if source:
         df = df[df["source"].fillna("") == source]
@@ -129,17 +164,20 @@ def articles():
 
     out = []
     for _, r in df.head(limit).iterrows():
-        out.append({
-            "uid": r.get("uid"),
-            "title": r.get("title"),
-            "summary": r.get("summary"),
-            "lang": r.get("lang"),
-            "source": r.get("source"),
-            "date_utc": r.get("date").isoformat() if pd.notna(r.get("date")) else None,
-            "date_ist": _to_ist(r.get("date")),
-            "url": r.get("url")
-        })
+        out.append(
+            {
+                "uid": r.get("uid"),
+                "title": r.get("title"),
+                "summary": r.get("summary"),
+                "lang": r.get("lang"),
+                "source": r.get("source"),
+                "date_utc": r.get("date").isoformat() if pd.notna(r.get("date")) else None,
+                "date_ist": _to_ist(r.get("date")),
+                "url": r.get("url"),
+            }
+        )
     return jsonify({"count": len(out), "items": out})
+
 
 @app.get("/verify")
 def verify():
@@ -148,12 +186,17 @@ def verify():
     Returns: top-k evidence with similarity scores (higher is closer).
     """
     claim = request.args.get("q", "").strip()
-    k = int(request.args.get("k", "5"))
     if not claim:
         return jsonify({"ok": False, "error": "missing q parameter"}), 400
 
+    try:
+        k = int(request.args.get("k", "5"))
+    except ValueError:
+        k = 5
+    k = max(1, min(k, 20))  # keep it sane
+
     df = _load_df()
-    idx, meta = _load_faiss_and_meta()
+    idx, _meta = _load_faiss_and_meta()
     qv = _embed_query(claim)
     D, I = idx.search(qv, k)
 
@@ -162,17 +205,20 @@ def verify():
         if i < 0 or i >= len(df):
             continue
         row = df.iloc[i]
-        out.append({
-            "rank": rank + 1,
-            "score": float(D[0][rank]),
-            "title": row.get("title"),
-            "summary": row.get("summary"),
-            "source": row.get("source"),
-            "date_utc": row.get("date").isoformat() if pd.notna(row.get("date")) else None,
-            "date_ist": _to_ist(row.get("date")),
-            "url": row.get("url"),
-        })
+        out.append(
+            {
+                "rank": rank + 1,
+                "score": float(D[0][rank]),
+                "title": row.get("title"),
+                "summary": row.get("summary"),
+                "source": row.get("source"),
+                "date_utc": row.get("date").isoformat() if pd.notna(row.get("date")) else None,
+                "date_ist": _to_ist(row.get("date")),
+                "url": row.get("url"),
+            }
+        )
     return jsonify({"ok": True, "claim": claim, "k": k, "results": out})
+
 
 if __name__ == "__main__":
     # local dev server
