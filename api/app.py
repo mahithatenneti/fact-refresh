@@ -12,13 +12,18 @@ import numpy as np
 import requests
 import faiss
 import torch
-from transformers import AutoTokenizer, AutoModel
+from transformers import AutoTokenizer, AutoModel, AutoModelForSequenceClassification
 
 # === Config ===
 HF_DATASET_ID = os.getenv("HF_DATASET_ID", "mahi1010/news_articles_daily_m")
-E5_NAME = os.getenv("E5_NAME", "intfloat/multilingual-e5-base")  # embedding model name
+E5_NAME = os.getenv("E5_NAME", "intfloat/multilingual-e5-base")  # embedding model
+NLI_NAME = os.getenv(
+    "NLI_NAME",
+    "MoritzLaurer/deberta-v3-base-mnli-fever-anli-ling-binary"  # multilingual compact NLI
+)
+# If you prefer classic English-only, set NLI_NAME="facebook/bart-large-mnli"
 
-# For private datasets you must have HF_TOKEN in your environment when you run (Actions or local).
+# For private datasets you must have HF_TOKEN in the environment.
 
 # (Helps reduce CPU usage on small runners)
 os.environ.setdefault("OMP_NUM_THREADS", "1")
@@ -34,6 +39,8 @@ _FAISS = None
 _META = None
 _E5_TOK = None
 _E5_MOD = None
+_NLI_TOK = None
+_NLI_MOD = None
 
 
 # ---------- Data loading ----------
@@ -99,13 +106,48 @@ def _embed_query(q: str) -> np.ndarray:
         return v.astype(np.float32)
 
 
+# ---------- NLI (verdict) helpers ----------
+def _load_nli():
+    global _NLI_TOK, _NLI_MOD
+    if _NLI_TOK is not None and _NLI_MOD is not None:
+        return _NLI_TOK, _NLI_MOD
+    _NLI_TOK = AutoTokenizer.from_pretrained(NLI_NAME)
+    _NLI_MOD = AutoModelForSequenceClassification.from_pretrained(NLI_NAME)
+    _NLI_MOD.eval()
+    return _NLI_TOK, _NLI_MOD
+
+
+def _nli_verdict(claim: str, evidence: str):
+    """
+    Returns: (label, conf, dist) where label in {"SUPPORTS","REFUTES","NEI"}.
+    We map typical MNLI label order (entailment, neutral, contradiction) to these 3.
+    """
+    tok, mod = _load_nli()
+    with torch.no_grad():
+        enc = tok(claim, evidence, return_tensors="pt", truncation=True)
+        logits = mod(**enc).logits[0]
+        probs = torch.softmax(logits, dim=-1).cpu().numpy()
+
+    # Assume order: entailment, neutral, contradiction
+    if probs.shape[0] == 3:
+        ent, neu, con = probs
+        dist = {"SUPPORTS": float(ent), "NEI": float(neu), "REFUTES": float(con)}
+    else:
+        # Fallback if head is unusual: pick max as SUPPORTS
+        m = float(probs.max())
+        dist = {"SUPPORTS": m, "NEI": 0.0, "REFUTES": 0.0}
+    label = max(dist, key=dist.get)
+    conf = dist[label]
+    return label, conf, dist
+
+
 # ---------- Routes ----------
 @app.get("/")
 def home():
     return {
         "ok": True,
-        "message": "Flask is running. Try /health, /articles?limit=5, or /verify?q=your+claim&k=5",
-        "endpoints": ["/health", "/articles", "/verify"],
+        "message": "Flask is running. Try /health, /articles?limit=5, /verify?q=claim&k=5, /verdict?q=claim&k=5",
+        "endpoints": ["/health", "/articles", "/verify", "/verdict"],
     }
 
 
@@ -113,7 +155,6 @@ def home():
 def health():
     df = _load_df()
     latest = df["date"].max()
-    # also report faiss availability (lazy)
     faiss_ready = _FAISS is not None
     return jsonify(
         {
@@ -123,6 +164,7 @@ def health():
             "latest_ist": _to_ist(latest),
             "dataset": HF_DATASET_ID,
             "faiss_loaded": faiss_ready,
+            "models": {"e5": E5_NAME, "nli": NLI_NAME},
         }
     )
 
@@ -193,7 +235,7 @@ def verify():
         k = int(request.args.get("k", "5"))
     except ValueError:
         k = 5
-    k = max(1, min(k, 20))  # keep it sane
+    k = max(1, min(k, 20))
 
     df = _load_df()
     idx, _meta = _load_faiss_and_meta()
@@ -218,6 +260,68 @@ def verify():
             }
         )
     return jsonify({"ok": True, "claim": claim, "k": k, "results": out})
+
+
+@app.get("/verdict")
+def verdict():
+    """
+    Use: /verdict?q=<claim>&k=5
+    1) retrieve top-k evidence with FAISS
+    2) run NLI over (claim, each evidence)
+    3) return best label + confidence and the evidence list
+    """
+    claim = request.args.get("q", "").strip()
+    if not claim:
+        return jsonify({"ok": False, "error": "missing q parameter"}), 400
+
+    try:
+        k = int(request.args.get("k", "5"))
+    except ValueError:
+        k = 5
+    k = max(1, min(k, 10))
+
+    # 1) retrieve evidence
+    df = _load_df()
+    idx, _meta = _load_faiss_and_meta()
+    qv = _embed_query(claim)
+    D, I = idx.search(qv, k)
+
+    evidences = []
+    for i in I[0]:
+        if 0 <= i < len(df):
+            r = df.iloc[i]
+            evidences.append({
+                "title": r.get("title"),
+                "summary": r.get("summary"),
+                "source": r.get("source"),
+                "date_utc": r.get("date").isoformat() if pd.notna(r.get("date")) else None,
+                "date_ist": _to_ist(r.get("date")),
+                "url": r.get("url")
+            })
+
+    if not evidences:
+        return jsonify({"ok": True, "claim": claim, "label": "NEI", "confidence": 0.0, "evidence": []})
+
+    # 2) NLI scoring
+    scored = []
+    for ev in evidences:
+        text = ev["summary"] or ev["title"] or ""
+        label, conf, dist = _nli_verdict(claim, text)
+        scored.append({**ev, "label": label, "confidence": conf, "distribution": dist})
+
+    # 3) pick strongest evidence as final label
+    best = max(scored, key=lambda x: x["confidence"])
+    final_label = best["label"]
+    final_conf  = best["confidence"]
+
+    return jsonify({
+        "ok": True,
+        "claim": claim,
+        "label": final_label,
+        "confidence": final_conf,
+        "evidence_top": best,
+        "evidence_list": scored
+    })
 
 
 if __name__ == "__main__":
