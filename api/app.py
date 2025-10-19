@@ -1,11 +1,28 @@
 import os, json, pandas as pd, numpy as np, requests, faiss, torch
 from datetime import datetime
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, abort
 from datasets import load_dataset
 from transformers import AutoTokenizer, AutoModel
+from functools import wraps  # <-- added for API key decorator
 
 HF_DATASET_ID = os.getenv("HF_DATASET_ID", "mahi1010/news_articles_daily_m")
 E5_NAME = os.getenv("E5_NAME", "intfloat/multilingual-e5-base")
+
+# ---- API key protection (added) ----
+API_KEY = os.getenv("API_KEY", "")
+
+def require_api_key(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        # Expect: Authorization: Bearer <API_KEY>
+        auth = request.headers.get("Authorization", "")
+        if API_KEY and auth == f"Bearer {API_KEY}":
+            return fn(*args, **kwargs)
+        if API_KEY:  # key configured but missing/wrong
+            abort(401)
+        return fn(*args, **kwargs)  # if no API_KEY set, keep endpoint open
+    return wrapper
+# -----------------------------------
 
 app = Flask(__name__)
 
@@ -88,6 +105,7 @@ def health():
 
 
 @app.get("/articles")
+@require_api_key   # <-- added protection
 def articles():
     df = _load_df().copy()
     q = request.args.get("q", "").strip()
@@ -124,6 +142,7 @@ def articles():
 
 
 @app.get("/verify")
+@require_api_key   # <-- added protection
 def verify():
     q = request.args.get("q", "").strip()
     k = int(request.args.get("k", "5"))
