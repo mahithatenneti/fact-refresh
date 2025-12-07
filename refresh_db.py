@@ -12,7 +12,7 @@ from scraper.preprocess import normalize_record
 HF_TOKEN = os.getenv("HF_TOKEN")                # set in GitHub Actions secrets
 HF_DATASET_ID = os.getenv(
     "HF_DATASET_ID",
-    "your-username/news_articles_daily"
+    "your-username/news_articles_daily_m"
 )
 ART_PARQUET = "data/news_articles.parquet"
 
