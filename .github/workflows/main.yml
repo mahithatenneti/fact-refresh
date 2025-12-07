@@ -2,43 +2,31 @@ name: Daily DB Refresh
 
 on:
   schedule:
-    # 09:00 IST daily = 03:30 UTC
-    - cron: "30 3 * * *"
-    # 21:00 IST daily = 15:30 UTC
-    - cron: "30 15 * * *"
+    - cron: "30 3 * * *"   # 09:00 IST
+    - cron: "30 15 * * *"  # 21:00 IST
   workflow_dispatch: {}
 
 jobs:
   refresh:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+
     env:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
       HF_DATASET_ID: "mahi1010/news_articles_daily_m"
-      E5_NAME: "intfloat/multilingual-e5-base"
-      SKIP_SUMMARY: "1"
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v3
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Install Python
+        uses: actions/setup-python@v3
         with:
           python-version: "3.11"
-          cache: "pip"
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install datasets huggingface_hub pandas
 
-      - name: Debug HF identity (no heredoc)
-        run: |
-          python -c "import os; from huggingface_hub import HfApi; api=HfApi(token=os.getenv('HF_TOKEN')); print('HF whoami:', api.whoami())"
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-
-      - name: Run refresh
-        run: |
-          python refresh_db.py
+      - name: Run Refresh Script
+        run: python refresh_db.py
