@@ -96,11 +96,13 @@ def main():
         "text_for_embed": r.get("text_for_embed", None),
 
         # keep old column name for notebook compatibility
-        "date": r.get("date"),
-
-        # new stable fields
-        "published_at": r.get("date"),
+        raw_date = r.get("date")
+        safe_date = raw_date if (raw_date is not None and str(raw_date).strip() != "") else now_utc
+        
+        "date": safe_date,                 # for backward compatibility
+        "published_at": safe_date,         # published_at never null now
         "scraped_at": now_utc,
+
     } for r in processed])
 
     # parse new dates immediately
